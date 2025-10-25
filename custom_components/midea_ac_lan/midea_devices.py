@@ -206,6 +206,13 @@ MIDEA_DEVICES: dict[int, dict[str, dict[str, Any] | str]] = {
                 "name": "Storage",
                 "icon": "mdi:repeat-variant",
             },
+            X34Attributes.storage_set_hour: {
+                "type": Platform.NUMBER,
+                "translation_key": "storage_set_hour",
+                "name": "Storage Set Hour",
+                "icon": "mdi:progress-clock",
+                "unit": UnitOfTime.HOURS,
+            },
             X34Attributes.mode: {
                 "type": Platform.SENSOR,
                 "translation_key": "mode",

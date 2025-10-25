@@ -515,6 +515,9 @@
       "storage_remaining": {
         "name": "保管剩余时间"
       },
+      "storage_set_hour": {
+        "name": "抑菌存储时长"
+      },
       "tank": {
         "name": "水箱水位"
       },

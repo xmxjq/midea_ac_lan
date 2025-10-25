@@ -515,6 +515,9 @@
       "storage_remaining": {
         "name": "Storage Remaining"
       },
+      "storage_set_hour": {
+        "name": "Storage Set Hour"
+      },
       "tank": {
         "name": "Tank"
       },
