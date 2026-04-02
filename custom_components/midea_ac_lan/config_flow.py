@@ -21,6 +21,7 @@ job process:
 """
 
 import logging
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -47,25 +48,22 @@ from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.json import save_json
 from homeassistant.util.json import load_json
-from midealocal.cloud import (
-    PRESET_ACCOUNT_DATA,
-    SUPPORTED_CLOUDS,
-    MideaCloud,
-    get_midea_cloud,
-)
 from midealocal.device import AuthException, MideaDevice, ProtocolVersion
 from midealocal.discover import discover
 from midealocal.exceptions import SocketException
 
 if TYPE_CHECKING:
     from aiohttp import ClientSession
+    from midealocal.cloud import MideaCloud
 
-if (MAJOR_VERSION, MINOR_VERSION) >= (2024, 4):
-    from homeassistant.config_entries import ConfigFlowResult  # pylint: disable=E0611
+    if (MAJOR_VERSION, MINOR_VERSION) >= (2024, 4):
+        from homeassistant.config_entries import ConfigFlowResult  # pylint: disable=E0611
+    else:
+        from homeassistant.data_entry_flow import (  # type: ignore[assignment]
+            FlowResult as ConfigFlowResult,
+        )
 else:
-    from homeassistant.data_entry_flow import (  # type: ignore[assignment]
-        FlowResult as ConfigFlowResult,
-    )
+    ConfigFlowResult = dict[str, Any]
 
 from .const import (
     CONF_ACCOUNT,
@@ -89,12 +87,27 @@ ADD_WAY = {
     "cache": "Remove login cache",
 }
 
-# Select DEFAULT_CLOUD from the list of supported cloud
-DEFAULT_CLOUD: str = list(SUPPORTED_CLOUDS)[3]
-
 STORAGE_PATH = f".storage/{DOMAIN}"
 
 SKIP_LOGIN = "Skip Login (input any user/password)"
+
+
+@lru_cache(maxsize=1)
+def _load_cloud_dependencies() -> dict[str, Any]:
+    """Import cloud helpers only when the config flow needs them."""
+    from midealocal.cloud import (
+        PRESET_ACCOUNT_DATA,
+        SUPPORTED_CLOUDS,
+        MideaCloud,
+        get_midea_cloud,
+    )
+
+    return {
+        "preset_account_data": PRESET_ACCOUNT_DATA,
+        "supported_clouds": SUPPORTED_CLOUDS,
+        "midea_cloud": MideaCloud,
+        "get_midea_cloud": get_midea_cloud,
+    }
 
 
 class MideaLanConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
@@ -115,7 +128,7 @@ class MideaLanConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         self.supports: dict = {}
         self.unsorted: dict[int, Any] = {}
         self.account: dict = {}
-        self.cloud: MideaCloud | None = None
+        self.cloud: Any = None
         self.session: ClientSession | None = None
         for device_type, device_info in MIDEA_DEVICES.items():
             self.unsorted[device_type] = device_info["name"]
@@ -123,15 +136,23 @@ class MideaLanConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         sorted_device_names = sorted(self.unsorted.items(), key=lambda x: x[1])
         for item in sorted_device_names:
             self.supports[item[0]] = item[1]
-        # preset account
-        self.preset_account: str = bytes.fromhex(
-            format((PRESET_ACCOUNT_DATA[0] ^ PRESET_ACCOUNT_DATA[1]), "X"),
-        ).decode("utf-8", errors="ignore")
-        # preset password
-        self.preset_password: str = bytes.fromhex(
-            format((PRESET_ACCOUNT_DATA[0] ^ PRESET_ACCOUNT_DATA[2]), "X"),
-        ).decode("utf-8", errors="ignore")
-        self.preset_cloud_name: str = DEFAULT_CLOUD
+        self.preset_account = ""
+        self.preset_password = ""
+        self.preset_cloud_name = ""
+
+    def _ensure_cloud_dependencies(self) -> dict[str, Any]:
+        """Load cloud helpers and preset credentials on demand."""
+        cloud_deps = _load_cloud_dependencies()
+        if not self.preset_cloud_name:
+            preset_account_data = cloud_deps["preset_account_data"]
+            self.preset_account = bytes.fromhex(
+                format((preset_account_data[0] ^ preset_account_data[1]), "X"),
+            ).decode("utf-8", errors="ignore")
+            self.preset_password = bytes.fromhex(
+                format((preset_account_data[0] ^ preset_account_data[2]), "X"),
+            ).decode("utf-8", errors="ignore")
+            self.preset_cloud_name = list(cloud_deps["supported_clouds"])[3]
+        return cloud_deps
 
     def _save_device_config(self, data: dict[str, Any]) -> None:
         """Save device config to json file with device id."""
@@ -272,9 +293,11 @@ class MideaLanConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         Config flow result
 
         """
+        cloud_deps = self._ensure_cloud_dependencies()
+        midea_cloud = cloud_deps["midea_cloud"]
         # get cloud servers configs
-        cloud_servers = await MideaCloud.get_cloud_servers()
-        default_keys = await MideaCloud.get_default_keys()
+        cloud_servers = await midea_cloud.get_cloud_servers()
+        default_keys = await midea_cloud.get_default_keys()
         # add skip login option to web UI with key 99
         cloud_servers[next(iter(default_keys))] = SKIP_LOGIN
         # user input data exist
@@ -439,6 +462,7 @@ class MideaLanConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
 
         """
         # set default args with perset account
+        cloud_deps = self._ensure_cloud_dependencies()
         if cloud_name is None or account is None or password is None:
             cloud_name = self.preset_cloud_name
             account = self.preset_account
@@ -449,7 +473,7 @@ class MideaLanConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
 
         # init cloud object or force reinit with new one
         if self.cloud is None or force_login:
-            self.cloud = get_midea_cloud(
+            self.cloud = cloud_deps["get_midea_cloud"](
                 cloud_name,
                 self.session,
                 account,
@@ -483,13 +507,14 @@ class MideaLanConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
 
         """
         device = self.devices[appliance_id]
+        cloud_deps = self._ensure_cloud_dependencies()
 
         if self.cloud is None:
             return {"error": "cloud_none"}
 
         # get device token/key from cloud
         keys = await self.cloud.get_cloud_keys(appliance_id)
-        default_keys = await MideaCloud.get_default_keys()
+        default_keys = await cloud_deps["midea_cloud"].get_default_keys()
         # use token/key to connect device and confirm token result
         for k, value in keys.items():
             # skip default_key

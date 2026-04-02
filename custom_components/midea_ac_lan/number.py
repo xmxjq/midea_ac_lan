@@ -44,53 +44,37 @@ class MideaNumber(MideaEntity, NumberEntity):
         self._min_value = self._config.get("min")
         self._step_value = self._config.get("step")
 
+    def _resolve_number_config(self, value: Any, fallback: float) -> float:
+        """Resolve static or device-backed number config values safely."""
+        if isinstance(value, int | float):
+            return float(value)
+        if value is None:
+            return fallback
+
+        attr_value = self._device.get_attribute(attr=value)
+        if attr_value is not None:
+            return float(attr_value)
+
+        device_value = getattr(self._device, value, None)
+        if device_value is not None:
+            return float(device_value)
+
+        return fallback
+
     @property
     def native_min_value(self) -> float:
         """Return minimum value."""
-        return cast(
-            "float",
-            (
-                self._min_value
-                if isinstance(self._min_value, int)
-                else (
-                    self._device.get_attribute(attr=self._min_value)
-                    if self._device.get_attribute(attr=self._min_value)
-                    else getattr(self._device, self._min_value)
-                )
-            ),
-        )
+        return self._resolve_number_config(self._min_value, 0.0)
 
     @property
     def native_max_value(self) -> float:
         """Return maximum value."""
-        return cast(
-            "float",
-            (
-                self._max_value
-                if isinstance(self._max_value, int)
-                else (
-                    self._device.get_attribute(attr=self._max_value)
-                    if self._device.get_attribute(attr=self._max_value)
-                    else getattr(self._device, self._max_value)
-                )
-            ),
-        )
+        return self._resolve_number_config(self._max_value, 100.0)
 
     @property
     def native_step(self) -> float:
         """Return step value."""
-        return cast(
-            "float",
-            (
-                self._step_value
-                if isinstance(self._step_value, int)
-                else (
-                    self._device.get_attribute(attr=self._step_value)
-                    if self._device.get_attribute(attr=self._step_value)
-                    else getattr(self._device, self._step_value)
-                )
-            ),
-        )
+        return self._resolve_number_config(self._step_value, 1.0)
 
     @property
     def native_value(self) -> float:
