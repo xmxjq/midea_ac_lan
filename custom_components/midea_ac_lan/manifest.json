@@ -9,6 +9,6 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/xmxjq/midea_ac_lan/issues",
   "loggers": ["midealocal"],
-  "requirements": ["git+https://github.com/xmxjq/midea-local.git"],
+  "requirements": ["midea-local @ git+https://github.com/xmxjq/midea-local.git@85f1cfed1ceeb979fc86b26b7cad552109c9a1e6"],
   "version": "v0.6.10-fix.3"
 }
